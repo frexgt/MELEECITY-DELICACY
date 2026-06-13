@@ -22,7 +22,10 @@ local gordon_hide = {
 }
 
 hook.Add("HUDShouldDraw", "homigrad", function(name)
-	if hide[name] or lply.PlayerClassName and lply.PlayerClassName == "Gordon" and gordon_hide[name] then
+	if hide[name] then
+		return false
+	end
+	if IsValid(lply) and lply.PlayerClassName and lply.PlayerClassName == "Gordon" and gordon_hide[name] then
 		return false
 	end
 end)
@@ -168,12 +171,13 @@ function draw.CirclePart(x, y, radius, seg, parts, pos)
 end
 
 -- Ring segment with gaps between sections
-function draw.CirclePartRing(x, y, rInner, rOuter, seg, parts, pos, gapDeg)
+function draw.CirclePartRing(x, y, rInner, rOuter, seg, parts, pos, gapDeg, extraDeg)
 	gapDeg = gapDeg or 3
+	extraDeg = extraDeg or 0
 	local poly = {}
 	local totalDeg = 360 / parts
-	local startDeg = pos * totalDeg + gapDeg * 0.5
-	local endDeg   = (pos + 1) * totalDeg - gapDeg * 0.5
+	local startDeg = pos * totalDeg + gapDeg * 0.5 + extraDeg
+	local endDeg   = (pos + 1) * totalDeg - gapDeg * 0.5 + extraDeg
 	local startR = math.rad(startDeg - 90)
 	local endR   = math.rad(endDeg   - 90)
 
@@ -199,11 +203,12 @@ function draw.CirclePartRing(x, y, rInner, rOuter, seg, parts, pos, gapDeg)
 	render.PopFilterMin()
 end
 
-function draw.CirclePartRingOutline(x, y, rInner, rOuter, seg, parts, pos, gapDeg)
+function draw.CirclePartRingOutline(x, y, rInner, rOuter, seg, parts, pos, gapDeg, extraDeg)
 	gapDeg = gapDeg or 3
+	extraDeg = extraDeg or 0
 	local totalDeg = 360 / parts
-	local startDeg = pos * totalDeg + gapDeg * 0.5
-	local endDeg   = (pos + 1) * totalDeg - gapDeg * 0.5
+	local startDeg = pos * totalDeg + gapDeg * 0.5 + extraDeg
+	local endDeg   = (pos + 1) * totalDeg - gapDeg * 0.5 + extraDeg
 	local startR = math.rad(startDeg - 90)
 	local endR   = math.rad(endDeg   - 90)
 
@@ -299,6 +304,7 @@ local function CreateRadialMenu(options_arg, bAutoClose)
 	menuPanel:SetKeyBoardInputEnabled(false)
 	menuPanel:SetAlpha(0)
 	menuPanel:AlphaTo(255,0.2)
+	menuPanel.OpenTime = CurTime()
 	menuPanel.bAutoClose = bAutoClose
 	if !options_arg then input.SetCursorPos(sizeX / 2, sizeY / 2) end
 
@@ -349,8 +355,17 @@ local function CreateRadialMenu(options_arg, bAutoClose)
 		end
 
 		sizePan = LerpFT(menuPanel:GetAlpha() > 100 and 0.05 or 0.25, sizePan, (menuPanel:GetAlpha() / 255))
-		local viewLerp = Lerp(math.ease.OutExpo(sizePan), 0, 1)
+
+		-- Overshoot "pop" easing: scale briefly overshoots past 1 then settles
+		local easedT = math.ease.OutExpo(sizePan)
+		local overshoot = math.sin(easedT * math.pi) * 0.08 * (1 - sizePan)
+		local viewLerp = Lerp(easedT, 0, 1) + overshoot
 		local panAlpha = menuPanel:GetAlpha() / 255
+
+		-- Rotational sweep-in: segments spin into place from a slight offset, settling to 0
+		local openElapsed = CurTime() - (menuPanel.OpenTime or CurTime())
+		local sweepT = math.Clamp(openElapsed / 0.3, 0, 1)
+		local sweepDeg = (1 - math.ease.OutExpo(sweepT)) * -35
 
 		local rOuter   = ScrH() * (options_arg ~= nil and 0.4 or 0.45) * viewLerp
 		local rInner   = ScrH() * RAD_INNER_FRAC * viewLerp
@@ -382,7 +397,7 @@ local function CreateRadialMenu(options_arg, bAutoClose)
 					math.floor(Lerp(sel, colSegBase.b, colSegHover.b)),
 					segA
 				)
-				draw.CirclePartRing(cx, cy, rInner, rOuter, 40, #options, idx, 3)
+				draw.CirclePartRing(cx, cy, rInner, rOuter, 40, #options, idx, 3, sweepDeg)
 
 				local count = #option[4]
 				local selectedPart = count - (math.floor((rOuter - sqrt) / (rOuter / count)))
@@ -397,9 +412,9 @@ local function CreateRadialMenu(options_arg, bAutoClose)
 					end
 					local rA = rInner + (rOuter - rInner) * ((i - 1) / count)
 					local rB = rInner + (rOuter - rInner) * (i / count)
-					draw.CirclePartRing(cx, cy, rA, rB, 40, #options, idx, 3)
+					draw.CirclePartRing(cx, cy, rA, rB, 40, #options, idx, 3, sweepDeg)
 
-					local midDeg = idx * (360 / #options) + (360 / #options) / 2
+					local midDeg = idx * (360 / #options) + (360 / #options) / 2 + sweepDeg
 					local midA = math.rad(midDeg - 90)
 					local tRad = rInner + (rOuter - rInner) * (i / count - 0.5 / count)
 					if paining then
@@ -425,7 +440,7 @@ local function CreateRadialMenu(options_arg, bAutoClose)
 				math.floor(Lerp(sel, colSegBase.b, colSegHover.b)),
 				math.floor(Lerp(sel, colSegBase.a, colSegHover.a) * panAlpha)
 			)
-			draw.CirclePartRing(cx, cy, rInner, hoverR, 40, #options, idx, 3)
+			draw.CirclePartRing(cx, cy, rInner, hoverR, 40, #options, idx, 3, sweepDeg)
 
 			-- thin border along outer edge
 			surface.SetDrawColor(
@@ -434,23 +449,26 @@ local function CreateRadialMenu(options_arg, bAutoClose)
 				math.floor(Lerp(sel, colBorderBase.b, colBorderHover.b)),
 				math.floor(Lerp(sel, colBorderBase.a, colBorderHover.a) * panAlpha)
 			)
-			draw.CirclePartRingOutline(cx, cy, rInner, hoverR, 40, #options, idx, 3)
+			draw.CirclePartRingOutline(cx, cy, rInner, hoverR, 40, #options, idx, 3, sweepDeg)
 
-			-- "shine" effect when hovered
+			-- "shine" effect when hovered: pulsing glow that intensifies with hover progress
 			if sel > 0.05 then
+				local pulse = 0.5 + math.sin(CurTime() * 5) * 0.5
+				local glowA = (40 + pulse * 50) * sel
 				surface.SetDrawColor(
 					math.floor(Lerp(sel, colBorderBase.r, colBorderHover.r)),
 					math.floor(Lerp(sel, colBorderBase.g, colBorderHover.g)),
 					math.floor(Lerp(sel, colBorderBase.b, colBorderHover.b)),
-					math.floor(Lerp(sel, 0, 80) * panAlpha)
+					math.floor(glowA * panAlpha)
 				)
-				-- draw slightly offset outline to create glow effect
-				draw.CirclePartRingOutline(cx, cy, rInner - 1, hoverR + 1, 40, #options, idx, 3)
-				draw.CirclePartRingOutline(cx, cy, rInner + 1, hoverR - 1, 40, #options, idx, 3)
+				-- draw slightly offset outline to create glow effect, expanding with the pulse
+				local expand = 1 + pulse * 1.5
+				draw.CirclePartRingOutline(cx, cy, rInner - expand, hoverR + expand, 40, #options, idx, 3, sweepDeg)
+				draw.CirclePartRingOutline(cx, cy, rInner + 1, hoverR - 1, 40, #options, idx, 3, sweepDeg)
 			end
 
 			-- text
-			local midDeg = idx * (360 / #options) + (360 / #options) / 2
+			local midDeg = idx * (360 / #options) + (360 / #options) / 2 + sweepDeg
 			local midA = math.rad(midDeg - 90)
 			local tRad = rInner + (hoverR - rInner) * 0.58
 
@@ -500,18 +518,23 @@ local function CreateRadialMenu(options_arg, bAutoClose)
 					), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 			end
 
-			-- player name and role, drawn once in first segment
+			-- player name and role, drawn once in first segment, fading/sliding in with the menu
 			if idx == 0 and !(paining) then
+				local nameSlide = (1 - viewLerp) * ScreenScale(20)
+				local shadowCol = Color(colBack.r, colBack.g, colBack.b, math.floor(255 * panAlpha))
 				draw.SimpleText(lply:GetPlayerName(), "HomigradFontGigantoNormous",
-					ScrW() * 0.0215 * viewLerp, ScrH() * 0.042, colBack, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+					ScrW() * 0.0215 * viewLerp - nameSlide, ScrH() * 0.042, shadowCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 				draw.SimpleText((lply.role and lply.role.name) or "", "HomigradFontGigantoNormous",
-					ScrW() * 0.0215 * viewLerp, ScrH() * 0.098, colBack, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+					ScrW() * 0.0215 * viewLerp - nameSlide, ScrH() * 0.098, shadowCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 				local col = lply:GetPlayerColor():ToColor()
+				col = Color(col.r, col.g, col.b, math.floor(255 * panAlpha))
+				local roleCol = lply.role and lply.role.color or incoentCol
+				roleCol = Color(roleCol.r, roleCol.g, roleCol.b, math.floor(255 * panAlpha))
 				draw.SimpleText(lply:GetPlayerName(), "HomigradFontGigantoNormous",
-					ScrW() * 0.02 * viewLerp, ScrH() * 0.04, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+					ScrW() * 0.02 * viewLerp - nameSlide, ScrH() * 0.04, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 				draw.SimpleText((lply.role and lply.role.name) or "", "HomigradFontGigantoNormous",
-					ScrW() * 0.02 * viewLerp, ScrH() * 0.095,
-					lply.role and lply.role.color or incoentCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+					ScrW() * 0.02 * viewLerp - nameSlide, ScrH() * 0.095,
+					roleCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 			end
 		end
 
@@ -750,6 +773,8 @@ local function CopyRight( text, font, x, y, color, ang, scale )
 end
 
 
+local identifierAlpha = 0
+local identifierLast = nil -- { name, color }
 hook.Add("HUDPaint","Identifier",function()
 	if lply.organism and lply.organism.otrub then return end
 	if !lply:Alive() then return end
@@ -762,22 +787,33 @@ hook.Add("HUDPaint","Identifier",function()
 	local Size = math.max(math.min(1 - trace.Fraction, 1), 0.1)
 	local x, y = trace.HitPos:ToScreen().x, trace.HitPos:ToScreen().y
 
-	if trace.Hit and (trace.Entity:IsRagdoll() or trace.Entity:IsPlayer()) then
-		if trace.Entity.PlayerClassName == "sc_infiltrator" then return end
-		if trace.Entity:GetNetVar("disappearance", nil) then return end
+	local ent = trace.Entity
+	local showing = trace.Hit and IsValid(ent) and (ent:IsRagdoll() or ent:IsPlayer())
+		and ent.PlayerClassName ~= "sc_infiltrator"
+		and not ent:GetNetVar("disappearance", nil)
 
-		draw.NoTexture()
+	identifierAlpha = LerpFT(showing and 0.25 or 0.15, identifierAlpha, showing and 1 or 0)
 
-		local col = trace.Entity:GetPlayerColor():ToColor()
-		col.a = 255 * Size * 1.5
-
-		local coloutline = (col.r < 50 and col.g < 50 and col.b < 50) and Color(100,100,100) or Color(0,0,0)
-		coloutline.a = 255 * Size * 1
-
-		draw.DrawText(trace.Entity:GetPlayerName() or "", "HomigradFontLarge", x + 1, y + 31, coloutline, TEXT_ALIGN_CENTER)
-
-		draw.DrawText(trace.Entity:GetPlayerName() or "", "HomigradFontLarge", x, y + 30, col, TEXT_ALIGN_CENTER)
+	if showing then
+		identifierLast = { name = ent:GetPlayerName() or "", color = ent:GetPlayerColor():ToColor() }
 	end
+
+	if identifierAlpha <= 0.01 or not identifierLast then return end
+
+	draw.NoTexture()
+
+	local col = identifierLast.color
+	col = Color(col.r, col.g, col.b, 255 * Size * 1.5 * identifierAlpha)
+
+	local coloutline = (col.r < 50 and col.g < 50 and col.b < 50) and Color(100,100,100) or Color(0,0,0)
+	coloutline.a = 255 * Size * 1 * identifierAlpha
+
+	-- subtle slide-up as it fades in
+	local slideY = (1 - identifierAlpha) * ScreenScale(4)
+
+	draw.DrawText(identifierLast.name, "HomigradFontLarge", x + 1, y + 31 - slideY, coloutline, TEXT_ALIGN_CENTER)
+
+	draw.DrawText(identifierLast.name, "HomigradFontLarge", x, y + 30 - slideY, col, TEXT_ALIGN_CENTER)
 end)
 
 
