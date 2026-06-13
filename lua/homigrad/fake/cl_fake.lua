@@ -195,6 +195,8 @@ local angleZero = Angle(0,0,0)
 local deathlerp = 0
 local tblfollow = {}
 local lerpasad = 0
+local fakeViewOrigin = nil -- сглаженная позиция камеры в рэгдолле
+local headScaleLerp = 1 -- сглаженный масштаб головы (0 = скрыта, 1 = видна)
 CalcView = function(ply, origin, angles, fov, znear, zfar)
 	if GetViewEntity() ~= (ply or LocalPlayer()) then return end
 	local oldorigin = -(-origin)
@@ -307,21 +309,36 @@ CalcView = function(ply, origin, angles, fov, znear, zfar)
 	
 	if hg_ragdollcombat:GetBool() or (fakeTimer and fakeTimer > CurTime()) then
 		if hg_firstperson_death:GetBool() then
-			deathlerp = LerpFT(0.05,deathlerp,1)
+			-- Единая скорость деатлерпа для согласованности переходов
+			deathlerp = LerpFT(0.08,deathlerp,1)
 			local angdeath = LerpAngle(deathlerp,deathLocalAng,att_Ang)
 
-			if not follow:GetManipulateBoneScale(follow:LookupBone("ValveBiped.Bip01_Head1")):IsEqualTol(vecZero,0.001) then
-				follow:ManipulateBoneScale(follow:LookupBone("ValveBiped.Bip01_Head1"), firstPerson and vecPochtiZero or vecFull )
+			local headBone = follow:LookupBone("ValveBiped.Bip01_Head1")
+			if headBone then
+				headScaleLerp = LerpFT(0.15, headScaleLerp, firstPerson and 0 or 1)
+				local smoothScale = LerpVector(headScaleLerp, vecPochtiZero, vecFull)
+				if not follow:GetManipulateBoneScale(headBone):IsEqualTol(smoothScale,0.001) then
+					follow:ManipulateBoneScale(headBone, smoothScale)
+				end
 			end
 
-			view.origin = pos
+			-- Плавный переход origin камеры от текущей позиции к точке глаз рэгдолла
+			fakeViewOrigin = fakeViewOrigin or pos
+			fakeViewOrigin = fakeViewOrigin + (pos - fakeViewOrigin) * (1 - 0.88 ^ (FrameTime() * 60))
+			view.origin = fakeViewOrigin
 			view.angles = att_Ang
 		else
-			if not follow:GetManipulateBoneScale(follow:LookupBone("ValveBiped.Bip01_Head1")):IsEqualTol(vecZero,0.001) then
-				follow:ManipulateBoneScale(follow:LookupBone("ValveBiped.Bip01_Head1"),lerpasad > 0.9 and vecFull or vecPochtiZero)
+			local headBone = follow:LookupBone("ValveBiped.Bip01_Head1")
+			if headBone then
+				headScaleLerp = LerpFT(0.15, headScaleLerp, lerpasad > 0.9 and 1 or 0)
+				local smoothScale = LerpVector(headScaleLerp, vecPochtiZero, vecFull)
+				if not follow:GetManipulateBoneScale(headBone):IsEqualTol(smoothScale,0.001) then
+					follow:ManipulateBoneScale(headBone, smoothScale)
+				end
 			end
 
-			lerpasad = Lerp(0.1, lerpasad, (IsAimingNoScope(ply) and 0 or 1))
+			-- Независимый от FPS лерп дистанции камеры (раньше Lerp(0.1,...) зависел от FPS)
+			lerpasad = LerpFT(0.15, lerpasad, (IsAimingNoScope(ply) and 0 or 1))
 
 			local ang = ply:EyeAngles()
 			local tr = {}
@@ -330,10 +347,16 @@ CalcView = function(ply, origin, angles, fov, znear, zfar)
 			tr.filter = {ply,follow}
 			tr.mask = MASK_SOLID
 
-			view.origin = util.TraceLine(tr).HitPos + ((tr.endpos - tr.start):GetNormalized() * -5)
+			-- Сглаживание origin, чтобы коллизии трассы не дёргали камеру резко
+			local traceOrigin = util.TraceLine(tr).HitPos + ((tr.endpos - tr.start):GetNormalized() * -5)
+			fakeViewOrigin = fakeViewOrigin or traceOrigin
+			fakeViewOrigin = fakeViewOrigin + (traceOrigin - fakeViewOrigin) * (1 - 0.8 ^ (FrameTime() * 60))
+			view.origin = fakeViewOrigin
 			view.angles = ang
 		end
 	else
+		fakeViewOrigin = nil
+		headScaleLerp = 1
 		view.origin = pos
 	end
 
