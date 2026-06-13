@@ -1,4 +1,3 @@
-
 local vecZero = Vector(0, 0, 0)
 local vectorUp = Vector(0, 0, 1)
 local shadowparams = {}
@@ -171,9 +170,15 @@ local speedupbones = {
 local vecfive = Vector(5,5,5)
 
 local player_GetHumans = player.GetHumans
+local nextHumansCacheAt = 0
 
 hook.Add("Think", "Fake", function()
-	hg.humans_cached = player_GetHumans()
+	local perfStart = HGPerf and HGPerf:Begin() or nil
+	local curTime = CurTime()
+	if curTime >= nextHumansCacheAt then
+		hg.humans_cached = player_GetHumans()
+		nextHumansCacheAt = curTime + 0.2
+	end
 
 	//for ply, ragdoll in pairs(hg.ragdollFake) do
 	for i, ply in player.Iterator() do
@@ -187,8 +192,8 @@ hook.Add("Think", "Fake", function()
 		if torso then
 			local torsopos, ang = ragdoll:GetBonePosition(torso)
 
-			if IsValid(ragdoll.bull) and (ragdoll.bull.lastposset or 0) < CurTime() then
-				ragdoll.bull.lastposset = CurTime() + 0.5
+			if IsValid(ragdoll.bull) and (ragdoll.bull.lastposset or 0) < curTime then
+				ragdoll.bull.lastposset = curTime + 0.5
 				
 				ragdoll.bull:SetPos(torsopos + vector_up * 5)
 				--ragdoll.bull:Remove()
@@ -222,7 +227,7 @@ hook.Add("Think", "Fake", function()
 
 		local inmove = false
 		
-		if (org.lightstun < CurTime()) and (tracehuy.Hit or ply.FakeRagdoll ~= ragdoll) and org.spine1 < hg.organism.fake_spine1 and org.canmove and ((ply.lastFake and (ply.lastFake) > CurTime()) or ply.FakeRagdoll ~= ragdoll) then
+		if (org.lightstun < curTime) and (tracehuy.Hit or ply.FakeRagdoll ~= ragdoll) and org.spine1 < hg.organism.fake_spine1 and org.canmove and ((ply.lastFake and (ply.lastFake) > curTime) or ply.FakeRagdoll ~= ragdoll) then
 			local power = 1
 			inmove = true
 			
@@ -237,8 +242,8 @@ hook.Add("Think", "Fake", function()
 					local name = ragdoll:GetBoneName(bone)
 
 					if IsValid(physobj) then
-						local bone_impulse = ply.HitBones and ply.HitBones[bonename] or CurTime()
-						local amt_impulse = (2 - math.Clamp(bone_impulse - CurTime(),0,2)) / 2
+						local bone_impulse = ply.HitBones and ply.HitBones[bonename] or curTime
+						local amt_impulse = (2 - math.Clamp(bone_impulse - curTime,0,2)) / 2
 						
 						local p = {}
 						p.secondstoarrive = 0.01
@@ -308,7 +313,9 @@ hook.Add("Think", "Fake", function()
 				angl:RotateAroundAxis(angl:Up(), 90)
 				angl:RotateAroundAxis(angl:Forward(), ishgweapon(wep) and not wep:IsPistolHoldType() and 120 or 180)
 				angl:RotateAroundAxis(angl:Up(), ishgweapon(wep) and wep:IsResting() and 50 - ply:EyeAngles().p or 0)
-				shadowControl(ragdoll, 1, 0.1, angl, 95, 20)
+				-- Уменьшено с 0.1 до 0.05: торс быстрее доворачивается к направлению взгляда,
+				-- управление прицеливанием/использованием в рэгдолле ощущается отзывчивее
+				shadowControl(ragdoll, 1, 0.05, angl, 95, 20)
 			end
 
 			if org.canmovehead then
@@ -320,7 +327,8 @@ hook.Add("Think", "Fake", function()
 				end]]
 				angl:RotateAroundAxis(angl:Forward(), 90)
 				angl:RotateAroundAxis(angl:Up(), 90)
-				shadowControl(ragdoll, 10, 0.1, angl, 100, 60) --,Vector(0,0,0),1000,1000)	
+				-- Уменьшено с 0.1 до 0.05 синхронно с торсом, чтобы голова не отставала
+				shadowControl(ragdoll, 10, 0.05, angl, 100, 60) --,Vector(0,0,0),1000,1000)	
 			end
 		end
 
@@ -334,7 +342,7 @@ hook.Add("Think", "Fake", function()
 
 		local forward = ply:KeyDown(IN_FORWARD)
 		local back = ply:KeyDown(IN_BACK)
-		time = CurTime()
+		time = curTime
 		
 		if org.neckslit and not org.otrub and org.arterialwounds and not table.IsEmpty(org.arterialwounds) then
 			local neckwound
@@ -823,40 +831,26 @@ hook.Add("Think", "Fake", function()
 				end
 				--end
 
-				if ply:KeyDown(IN_JUMP) then
-					angle:RotateAroundAxis(angle:Up(), 30)
-				end
+				-- Плавный переход между позами "стоя/в прыжке" вместо мгновенного
+				-- переключения углов ног каждый кадр (убирает рывок при нажатии/отжатии Jump)
+				ragdoll.jumpLegLerp = LerpFT(0.15, ragdoll.jumpLegLerp or 0, ply:KeyDown(IN_JUMP) and 1 or 0)
+				local jl = ragdoll.jumpLegLerp
 
-				angle:RotateAroundAxis(angle:Right(), ply:KeyDown(IN_JUMP) and 0 or -15)
-				shadowControl(ragdoll, 8, 0.001, angle, 120, 30)
+				local angle8 = -(-angle)
+				angle8:RotateAroundAxis(angle8:Up(), 30 * jl)
+				angle8:RotateAroundAxis(angle8:Right(), -15 * (1 - jl))
+				shadowControl(ragdoll, 8, 0.001, angle8, 120, 30)
 
-				if ply:KeyDown(IN_JUMP) then
-					angle:RotateAroundAxis(angle:Up(), -30)
-				end
+				local angle11 = -(-angle)
+				angle11:RotateAroundAxis(angle11:Right(), 30 * (1 - jl))
+				shadowControl(ragdoll, 11, 0.001, angle11, 120, 30) -- ragdoll, physNumber, ss, ang, maxang, maxangdamp, pos, maxspeed, maxspeeddamp
 
-				if ply:KeyDown(IN_JUMP) then
-					angle:RotateAroundAxis(angle:Up(), 30)
-				end
+				local angle9 = -(-angle)
+				angle9:RotateAroundAxis(angle9:Up(), 90 * (1 - jl))
+				shadowControl(ragdoll, 9, 0.001, angle9, 120, 30)
 
-				angle:RotateAroundAxis(angle:Right(), ply:KeyDown(IN_JUMP) and 0 or 30)
-				shadowControl(ragdoll, 11, 0.001, angle, 120, 30) -- ragdoll, physNumber, ss, ang, maxang, maxangdamp, pos, maxspeed, maxspeeddamp
-
-				if ply:KeyDown(IN_JUMP) then
-					angle:RotateAroundAxis(angle:Up(), -30)
-				end
-
-				//if vellen < 200 then
-				if !ply:KeyDown(IN_JUMP) then
-					angle:RotateAroundAxis(angle:Up(), 90)
-				end
-				shadowControl(ragdoll, 9, 0.001, angle, 120, 30)
-				if !ply:KeyDown(IN_JUMP) then
-					angle:RotateAroundAxis(angle:Up(), -90)
-				end
-				if !ply:KeyDown(IN_JUMP) then
-					angle:RotateAroundAxis(angle:Up(), 90)
-				end
-				shadowControl(ragdoll, 12, 0.001, angle, 120, 30)
+				local angle12 = -(-angle)
+				shadowControl(ragdoll, 12, 0.001, angle12, 120, 30)
 
 				local rleg = ragdoll:GetPhysicsObjectNum(realPhysNum(ragdoll, 13))
 				local lleg = ragdoll:GetPhysicsObjectNum(realPhysNum(ragdoll, 14))
@@ -934,6 +928,7 @@ hook.Add("Think", "Fake", function()
 			end
 		end*/
 	end
+	if HGPerf and perfStart then HGPerf:End("fake.control.think", perfStart) end
 end)
 
 hook.Add("PlayerDeath", "homigrad-fake-control", function(ply)
@@ -956,8 +951,47 @@ hook.Add("PlayerDeath", "homigrad-fake-control", function(ply)
 	end
 end)
 
-hook.Add("Think", "RagdollWaterSplash", function()
+local trackedWaterRagdolls = {}
+local nextRagdollSplashTick = 0
+local nextRagdollSplashScan = 0
+
+hook.Add("OnEntityCreated", "RagdollWaterSplashTrack", function(ent)
+	if ent:GetClass() == "prop_ragdoll" then
+		trackedWaterRagdolls[ent] = true
+	end
+end)
+
+hook.Add("EntityRemoved", "RagdollWaterSplashTrack", function(ent)
+	trackedWaterRagdolls[ent] = nil
+end)
+
+timer.Simple(0, function()
 	for _, ragdoll in ipairs(ents.FindByClass("prop_ragdoll")) do
+		trackedWaterRagdolls[ragdoll] = true
+	end
+end)
+
+hook.Add("Think", "RagdollWaterSplash", function()
+	local perfStart = HGPerf and HGPerf:Begin() or nil
+	local curTime = CurTime()
+	if curTime < nextRagdollSplashTick then
+		if HGPerf and perfStart then HGPerf:End("ragdoll.splash.gate", perfStart) end
+		return
+	end
+	nextRagdollSplashTick = curTime + 0.1
+
+	if curTime >= nextRagdollSplashScan then
+		nextRagdollSplashScan = curTime + 2
+		for _, ragdoll in ipairs(ents.FindByClass("prop_ragdoll")) do
+			trackedWaterRagdolls[ragdoll] = true
+		end
+	end
+
+	for ragdoll in pairs(trackedWaterRagdolls) do
+		if not IsValid(ragdoll) then
+			trackedWaterRagdolls[ragdoll] = nil
+			continue
+		end
 		local waterLevel = ragdoll:WaterLevel()
 		if waterLevel > 0 and (ragdoll.oldWaterLevel or 0) == 0 then
 			local velocity = ragdoll:GetVelocity():Length()
@@ -1024,4 +1058,5 @@ hook.Add("Think", "RagdollWaterSplash", function()
 		end
 		ragdoll.oldWaterLevel = waterLevel
 	end
+	if HGPerf and perfStart then HGPerf:End("ragdoll.splash.think", perfStart) end
 end)
