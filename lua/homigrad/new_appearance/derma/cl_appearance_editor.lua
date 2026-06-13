@@ -124,12 +124,35 @@ local function CloseAllOpenMenus()
         table.remove(openMenus, i)
     end
 end
+
+-- Smoothly fades a panel out before removing it
+local function FadeOutAndRemove(pnl, duration)
+    if not IsValid(pnl) then return end
+    duration = duration or 0.15
+    pnl:SetMouseInputEnabled(false)
+    pnl:SetKeyboardInputEnabled(false)
+    pnl:AlphaTo(0, duration, 0, function(_, p)
+        if IsValid(p) then p:Remove() end
+    end)
+end
 local function CreateStyledListMenu(title)
     local menu = vgui.Create("DPanel")
     menu:SetSize(ScrW() * 0.75, ScrH() * 0.75)
     menu:Center()
     menu:MakePopup()
     RegisterOpenMenu(menu)
+
+    -- Fade + slight scale-in on open
+    menu:SetAlpha(0)
+    local targetW, targetH = menu:GetSize()
+    local cx, cy = menu:GetPos()
+    local startScale = 0.96
+    menu:SetSize(targetW * startScale, targetH * startScale)
+    menu:Center()
+    menu:AlphaTo(255, 0.18, 0)
+    menu:SizeTo(targetW, targetH, 0.18, 0, -1, function(_, pnl)
+        if IsValid(pnl) then pnl:Center() end
+    end)
 
     function menu:Paint(w, h)
         surface.SetDrawColor(10, 10, 10, 230)
@@ -147,7 +170,7 @@ local function CreateStyledListMenu(title)
     closeBtn:SetText("X")
     closeBtn:SetFont("ZCity_Tiny")
     closeBtn:SetTextColor(Color(200, 200, 200))
-    closeBtn.DoClick = function() menu:Remove() end
+    closeBtn.DoClick = function() FadeOutAndRemove(menu, 0.15) end
     closeBtn.Paint = function(s, w, h)
         if s:IsHovered() then
             surface.SetDrawColor(255, 0, 0, 255)
@@ -174,22 +197,58 @@ local function CreateStyledListMenu(title)
         btn.DoClick = function()
             if onClick then onClick() end
             surface.PlaySound("player/weapon_draw_0"..math.random(2, 5)..".wav")
-            if IsValid(menu) then menu:Remove() end
+            if IsValid(menu) then FadeOutAndRemove(menu, 0.12) end
         end
         btn.Paint = function(s, w, h)
-            s.HoverLerp = LerpFT(0.2, s.HoverLerp or 0, s:IsHovered() and 1 or 0)
-            local slideOffset = s.HoverLerp * ScreenScale(6)
-            if s:IsHovered() then
-                surface.SetDrawColor(255, 255, 255, 255)
-                surface.DrawRect(slideOffset, 0, w, h)
-                s:SetTextColor(Color(0, 0, 0))
+            local hovered = s:IsHovered()
+            local t = CurTime()
+            s.HoverLerp = LerpFT(0.2, s.HoverLerp or 0, hovered and 1 or 0)
+            s.FillLerp = LerpFT(0.3, s.FillLerp or 0, hovered and 1 or 0)
+            s.AccentLerp = LerpFT(0.22, s.AccentLerp or 0, hovered and 1 or 0)
+
+            local fill = s.FillLerp or 0
+            local accent = s.AccentLerp or 0
+            local accentW = ScreenScale(2)
+
+            if hovered then
+                if not s.HoveredSoundPlayed then
+                    sound.PlayFile("sound/hover.ogg", "noblock", function(station) if IsValid(station) then station:Play() end end)
+                    s.HoveredSoundPlayed = true
+                    s.HoverStartTime = t
+                end
+
+                local pulse = 0.5 + math.sin(t * 6) * 0.5
+                local glowAlpha = (30 + pulse * 30) * fill
+                surface.SetDrawColor(255, 255, 255, glowAlpha)
+                surface.DrawRect(-ScreenScale(2), -ScreenScale(1), w + ScreenScale(4), h + ScreenScale(2))
+
+                local fillW = math.Round(w * fill)
+                local flickerAlpha = 255
+                if math.random() > 0.92 then flickerAlpha = math.random(120, 230) end
+                surface.SetDrawColor(255, 255, 255, flickerAlpha)
+                surface.DrawRect(0, 0, fillW, h)
             else
-                s:SetTextColor(Color(255, 255, 255))
+                s.HoveredSoundPlayed = false
             end
-            s:SetTextColor(Color(0,0,0,0))
-            local textColor = s:IsHovered() and Color(0,0,0) or Color(255,255,255)
+
+            if accent > 0 then
+                local accentH = math.Round(h * math.min(accent * 1.15, 1))
+                surface.SetDrawColor(255, 255, 255, 255 * accent)
+                surface.DrawRect(0, 0, accentW, accentH)
+            end
+
+            local slideOffset = accentW
+            local tc = math.Round(255 * (1 - fill))
+            local textColor = Color(tc, tc, tc)
+
+            if hovered and (t - (s.HoverStartTime or 0)) < 0.25 and math.random() > 0.5 then
+                local glitchOff = math.random(2, 5)
+                draw.SimpleText(text, s:GetFont(), slideOffset + ScreenScale(2) - glitchOff, h/2, Color(255, 60, 60, 160), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(text, s:GetFont(), slideOffset + ScreenScale(2) + glitchOff, h/2, Color(60, 255, 255, 160), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+
             draw.SimpleText(text, s:GetFont(), slideOffset + ScreenScale(2), h/2, textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            if s:IsHovered() and math.random() > 0.7 then
+            if hovered and math.random() > 0.7 then
                 local offsetX = math.random(-2, 2)
                 local offsetY = math.random(-2, 2)
                 draw.SimpleText(text, s:GetFont(), slideOffset + ScreenScale(2) + offsetX, h/2 + offsetY, Color(0, 0, 0, math.random(50, 150)), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -213,6 +272,17 @@ local function CreateStyledAccessoryMenu(parent, title)
     menu:Center()
     menu:MakePopup()
     RegisterOpenMenu(menu)
+
+    -- Fade + slight scale-in on open
+    menu:SetAlpha(0)
+    local targetW, targetH = menu:GetSize()
+    local startScale = 0.96
+    menu:SetSize(targetW * startScale, targetH * startScale)
+    menu:Center()
+    menu:AlphaTo(255, 0.18, 0)
+    menu:SizeTo(targetW, targetH, 0.18, 0, -1, function(_, pnl)
+        if IsValid(pnl) then pnl:Center() end
+    end)
     
     function menu:Paint(w, h)
         surface.SetDrawColor(10, 10, 10, 230)
@@ -230,7 +300,7 @@ local function CreateStyledAccessoryMenu(parent, title)
     closeBtn:SetText("X")
     closeBtn:SetFont("ZCity_Tiny")
     closeBtn:SetTextColor(Color(200, 200, 200))
-    closeBtn.DoClick = function() menu:Remove() end
+    closeBtn.DoClick = function() FadeOutAndRemove(menu, 0.15) end
     closeBtn.Paint = function(s, w, h)
         if s:IsHovered() then
             surface.SetDrawColor(255, 0, 0, 255)
@@ -339,7 +409,7 @@ local function CreateStyledAccessoryMenu(parent, title)
         function spawnIcon:DoClick()
             if onSelect then onSelect(accessorKey) end
             surface.PlaySound("player/clothes_generic_foley_0"..math.random(5)..".wav")
-            menu:Remove()
+            FadeOutAndRemove(menu, 0.12)
         end
         
         function spawnIcon:Think()
@@ -357,8 +427,17 @@ local function CreateStyledAccessoryMenu(parent, title)
         end
 
         function ico:Paint(w, h)
-            -- High contrast item borders
-            if self.bIsHovered then
+            self.HoverLerp = LerpFT(0.25, self.HoverLerp or 0, self.bIsHovered and 1 or 0)
+            local hov = self.HoverLerp or 0
+
+            -- High contrast item borders with a soft pulsing glow on hover
+            if hov > 0 then
+                local t = CurTime()
+                local pulse = 0.5 + math.sin(t * 6) * 0.5
+                local glowAlpha = (60 + pulse * 60) * hov
+                surface.SetDrawColor(255, 255, 255, glowAlpha)
+                surface.DrawRect(-ScreenScale(2), -ScreenScale(2), w + ScreenScale(4), h + ScreenScale(4))
+
                 surface.SetDrawColor(255, 255, 255, 255)
                 surface.DrawOutlinedRect(0, 0, w, h, 2)
                 surface.SetDrawColor(40, 40, 40, 200)
@@ -390,7 +469,16 @@ local function CreateStyledAccessoryMenu(parent, title)
         ico.bIsHovered = false
         
         function ico:Paint(w, h)
-            if self.bIsHovered then
+            self.HoverLerp = LerpFT(0.25, self.HoverLerp or 0, self.bIsHovered and 1 or 0)
+            local hov = self.HoverLerp or 0
+
+            if hov > 0 then
+                local t = CurTime()
+                local pulse = 0.5 + math.sin(t * 6) * 0.5
+                local glowAlpha = (60 + pulse * 60) * hov
+                surface.SetDrawColor(255, 50, 50, glowAlpha)
+                surface.DrawRect(-ScreenScale(2), -ScreenScale(2), w + ScreenScale(4), h + ScreenScale(4))
+
                 surface.SetDrawColor(255, 50, 50, 255)
                 surface.DrawOutlinedRect(0, 0, w, h, 2)
             else
@@ -409,7 +497,7 @@ local function CreateStyledAccessoryMenu(parent, title)
             if mc == MOUSE_LEFT then
                 if onSelect then onSelect("none") end
                 surface.PlaySound("player/clothes_generic_foley_0"..math.random(5)..".wav")
-                menu:Remove()
+                FadeOutAndRemove(menu, 0.12)
             end
         end
         
@@ -425,7 +513,7 @@ local function CreateStyledAccessoryMenu(parent, title)
     end
     
     -- Auto-close if clicking outside (Simulated modal behavior)
-    menu.Close = function() menu:Remove() end
+    menu.Close = function() FadeOutAndRemove(menu, 0.12) end
     
     return menu
 end
@@ -637,45 +725,74 @@ function PANEL:PostInit()
         
         -- Animation state
         btn.HoverLerp = 0
+        btn.FillLerp = 0
+        btn.AccentLerp = 0
         
-        -- Main Menu Style Paint (Slide + White BG + Glitch)
+        -- Improved Paint: smooth wipe fill, glow pulse, left accent bar
         btn.Paint = function(s, w, h)
-            -- Animate hover
-            s.HoverLerp = LerpFT(0.2, s.HoverLerp or 0, s:IsHovered() and 1 or 0)
-            
-            -- Calculate slide offset
-            local slideOffset = s.HoverLerp * ScreenScale(10)
-            
-            if s:IsHovered() then
+            local hovered = s:IsHovered()
+            local t = CurTime()
+
+            -- Animate hover lerps at slightly different speeds for a layered feel
+            s.HoverLerp = LerpFT(0.2, s.HoverLerp or 0, hovered and 1 or 0)
+            s.FillLerp = LerpFT(0.3, s.FillLerp or 0, hovered and 1 or 0)
+            s.AccentLerp = LerpFT(0.22, s.AccentLerp or 0, hovered and 1 or 0)
+
+            local fill = s.FillLerp
+            local accent = s.AccentLerp
+            local accentW = ScreenScale(2)
+
+            if hovered then
                 if not s.HoveredSoundPlayed then
                     sound.PlayFile("sound/hover.ogg", "noblock", function(station) if IsValid(station) then station:Play() end end)
                     s.HoveredSoundPlayed = true
+                    s.HoverStartTime = t
                 end
-                
-                -- White Background on Hover
-                surface.SetDrawColor(255, 255, 255, 255)
-                surface.DrawRect(slideOffset, 0, w, h)
-                s:SetTextColor(Color(0, 0, 0))
+
+                -- Soft pulsing glow behind the fill
+                local pulse = 0.5 + math.sin(t * 6) * 0.5
+                local glowAlpha = (30 + pulse * 30) * fill
+                surface.SetDrawColor(255, 255, 255, glowAlpha)
+                surface.DrawRect(-ScreenScale(2), -ScreenScale(1), w + ScreenScale(4), h + ScreenScale(2))
+
+                -- Fill wipes in from the left
+                local fillW = math.Round(w * fill)
+                local flickerAlpha = 255
+                if math.random() > 0.92 then flickerAlpha = math.random(120, 230) end
+                surface.SetDrawColor(255, 255, 255, flickerAlpha)
+                surface.DrawRect(0, 0, fillW, h)
+
+                local tc = math.Round(255 * (1 - fill))
+                s:SetTextColor(Color(tc, tc, tc))
             else
                 s.HoveredSoundPlayed = false
                 s:SetTextColor(Color(255, 255, 255))
             end
+
+            -- Left accent bar grows downward
+            if accent > 0 then
+                local accentH = math.Round(h * math.min(accent * 1.15, 1))
+                surface.SetDrawColor(255, 255, 255, 255 * accent)
+                surface.DrawRect(0, 0, accentW, accentH)
+            end
+
+            local slideOffset = accentW + s.HoverLerp * ScreenScale(4)
             
-            -- Manual text drawing to handle the offset
-            -- We disable the default text drawing by setting text color to transparent in Paint (or overriding)
-            -- But DButton draws text in its own PaintOver or internal logic usually.
-            -- To override text position without SetPos (since Docked), we must draw text manually.
-            -- DButton:SetText("") and store text elsewhere? Or just set color alpha 0?
-            
-            -- Let's rely on Paint to draw everything and hide default text
-            -- However, s:SetTextColor affects the default draw.
-            -- We can set text color alpha to 0 for the default draw, and draw manually.
+            -- Manual text drawing to handle the offset; default text is hidden via alpha 0
             s:SetTextColor(Color(0,0,0,0)) 
             
-            local textColor = s:IsHovered() and Color(0,0,0) or Color(255,255,255)
+            local textColor = hovered and Color(0,0,0) or Color(255,255,255)
+
+            -- RGB-split glitch flicker briefly after entering hover
+            if hovered and (t - (s.HoverStartTime or 0)) < 0.25 and math.random() > 0.5 then
+                local glitchOff = math.random(2, 5)
+                draw.SimpleText(text, s:GetFont(), slideOffset + ScreenScale(2) - glitchOff, h/2, Color(255, 60, 60, 160), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(text, s:GetFont(), slideOffset + ScreenScale(2) + glitchOff, h/2, Color(60, 255, 255, 160), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+
             draw.SimpleText(text, s:GetFont(), slideOffset + ScreenScale(2), h/2, textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             
-            if s:IsHovered() and math.random() > 0.7 then
+            if hovered and math.random() > 0.7 then
                 local offsetX = math.random(-2, 2)
                 local offsetY = math.random(-2, 2)
                 draw.SimpleText(text, s:GetFont(), slideOffset + ScreenScale(2) + offsetX, h/2 + offsetY, Color(0, 0, 0, math.random(50, 150)), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -835,7 +952,9 @@ function PANEL:PostInit()
         colorSelector:Dock(TOP)
         colorSelector:DockMargin(0, 0, 0, ScreenScale(8))
         for k, v in pairs(hg.Appearance.Clothes[tMdl.sex and 2 or 1]) do
-            local mater = menu:AddOption(k,function()
+            local clothName = string.Replace(k, "_colorable", "")
+            clothName = string.NiceName(string.Replace(clothName, "_", " "))
+            local mater = menu:AddOption(clothName,function()
                 main.AppearanceTable.AClothes.main = k
             end)
             if hg.Appearance.ClothesDesc[k] then
@@ -855,7 +974,9 @@ function PANEL:PostInit()
         CloseAllOpenMenus()
         local menu = CreateStyledListMenu("Lower Body")
         for k, v in pairs(hg.Appearance.Clothes[tMdl.sex and 2 or 1]) do
-            local mater = menu:AddOption(k,function()
+            local clothName = string.Replace(k, "_colorable", "")
+            clothName = string.NiceName(string.Replace(clothName, "_", " "))
+            local mater = menu:AddOption(clothName,function()
                 main.AppearanceTable.AClothes.pants = k
             end)
             if hg.Appearance.ClothesDesc[k] then
@@ -875,7 +996,9 @@ function PANEL:PostInit()
         CloseAllOpenMenus()
         local menu = CreateStyledListMenu("Footwear")
         for k, v in pairs(hg.Appearance.Clothes[tMdl.sex and 2 or 1]) do
-            local mater = menu:AddOption(k,function()
+            local clothName = string.Replace(k, "_colorable", "")
+            clothName = string.NiceName(string.Replace(clothName, "_", " "))
+            local mater = menu:AddOption(clothName,function()
                 main.AppearanceTable.AClothes.boots = k
             end)
         end
@@ -932,39 +1055,69 @@ function PANEL:PostInit()
         sound.PlayFile("sound/press.mp3", "noblock", function(station) if IsValid(station) then station:Play() end end)
     end
 
-    -- Paint (Copied from Main Menu for consistency)
+    -- Paint (Improved: smooth wipe fill + accent bar, consistent with main menu)
     returnBtn.Paint = function(self, w, h)
         local font = self:GetFont()
         local text = self:GetText()
         surface.SetFont(font)
         local tw, th = surface.GetTextSize(text)
 
-        if self:IsHovered() then
+        local hovered = self:IsHovered()
+        local t = CurTime()
+        self.FillLerp = LerpFT(0.3, self.FillLerp or 0, hovered and 1 or 0)
+        self.AccentLerp = LerpFT(0.22, self.AccentLerp or 0, hovered and 1 or 0)
+
+        local fill = self.FillLerp or 0
+        local accent = self.AccentLerp or 0
+        local accentW = ScreenScale(2)
+        local totalW = tw + padding * 2
+
+        if hovered then
             if not self.HoveredSoundPlayed then
                 sound.PlayFile("sound/hover.ogg", "noblock", function(station) if IsValid(station) then station:Play() end end)
                 self.HoveredSoundPlayed = true
+                self.HoverStartTime = t
             end
-            
-            local alpha = 255
-            if math.random() > 0.9 then alpha = math.random(50, 200) end
-            
-            surface.SetDrawColor(255, 255, 255, alpha)
-            surface.DrawRect(padding, 0, tw, h)
-            self:SetTextColor(Color(0, 0, 0, alpha))
+
+            local pulse = 0.5 + math.sin(t * 6) * 0.5
+            local glowAlpha = (30 + pulse * 30) * fill
+            surface.SetDrawColor(255, 255, 255, glowAlpha)
+            surface.DrawRect(-ScreenScale(2), -ScreenScale(1), totalW + ScreenScale(4), h + ScreenScale(2))
+
+            local fillW = math.Round(totalW * fill)
+            local flickerAlpha = 255
+            if math.random() > 0.92 then flickerAlpha = math.random(120, 230) end
+            surface.SetDrawColor(255, 255, 255, flickerAlpha)
+            surface.DrawRect(0, 0, fillW, h)
+
+            local tc = math.Round(255 * (1 - fill))
+            self:SetTextColor(Color(tc, tc, tc, 255))
         else
             self.HoveredSoundPlayed = false
             self:SetTextColor(Color(255, 255, 255))
         end
-        
+
+        if accent > 0 then
+            local accentH = math.Round(h * math.min(accent * 1.15, 1))
+            surface.SetDrawColor(255, 255, 255, 255 * accent)
+            surface.DrawRect(0, 0, accentW, accentH)
+        end
+
         local offX, offY = 0, 0
         if math.random() > 0.9 then
              offX = math.random(-2, 2)
              offY = math.random(-2, 2)
         end
-        
+
+        if hovered and (t - (self.HoverStartTime or 0)) < 0.25 and math.random() > 0.5 then
+            local glitchOff = math.random(2, 5)
+            draw.SimpleText(text, font, padding + offX - glitchOff, h/2 + offY, Color(255, 60, 60, 160), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(text, font, padding + offX + glitchOff, h/2 + offY, Color(60, 255, 255, 160), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+
         draw.SimpleText(text, font, padding + offX, h/2 + offY, self:GetTextColor(), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         
-        if self:IsHovered() and math.random() > 0.7 then
+        if hovered and math.random() > 0.7 then
             local offsetX = math.random(-5, 5)
             local offsetY = math.random(-2, 2)
             draw.SimpleText(text, font, padding + offsetX, h/2 + offsetY, Color(0, 0, 0, math.random(50, 150)), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -1014,6 +1167,16 @@ function PANEL:PostInit()
         presetMenu:Center()
         presetMenu:MakePopup()
         presetMenu:SetDraggable(false)
+
+        -- Fade + slight scale-in on open
+        presetMenu:SetAlpha(0)
+        local pmW, pmH = presetMenu:GetSize()
+        presetMenu:SetSize(pmW * 0.96, pmH * 0.96)
+        presetMenu:Center()
+        presetMenu:AlphaTo(255, 0.15, 0)
+        presetMenu:SizeTo(pmW, pmH, 0.15, 0, -1, function(_, pnl)
+            if IsValid(pnl) then pnl:Center() end
+        end)
         
         function presetMenu:Paint(w, h)
             draw.RoundedBox(8, 0, 0, w, h, Color(20, 20, 28, 250))
@@ -1035,15 +1198,19 @@ function PANEL:PostInit()
             presetBtn:SetTextColor(colors.mainText)
             
             function presetBtn:Paint(w, h)
-                if self:IsHovered() then
-                    surface.SetDrawColor(200, 220, 220, 255)
-                    surface.DrawRect(0, 0, w, h)
-                    self:SetTextColor(Color(0, 0, 0))
-                else
-                    surface.SetDrawColor(0, 0, 0, 150)
-                    surface.DrawRect(0, 0, w, h)
-                    self:SetTextColor(colors.mainText)
-                end
+                self.HoverLerp = LerpFT(0.25, self.HoverLerp or 0, self:IsHovered() and 1 or 0)
+                local hov = self.HoverLerp or 0
+
+                local bgFrom, bgTo = Color(0, 0, 0, 150), Color(200, 220, 220, 255)
+                local r = Lerp(hov, bgFrom.r, bgTo.r)
+                local g = Lerp(hov, bgFrom.g, bgTo.g)
+                local b = Lerp(hov, bgFrom.b, bgTo.b)
+                local a = Lerp(hov, bgFrom.a, bgTo.a)
+                surface.SetDrawColor(r, g, b, a)
+                surface.DrawRect(0, 0, w, h)
+
+                local tc = Lerp(hov, 255, 0)
+                self:SetTextColor(Color(tc, tc, tc))
             end
             
             function presetBtn:DoClick()
@@ -1059,7 +1226,7 @@ function PANEL:PostInit()
                     surface.PlaySound("buttons/button10.wav")
                     notification.AddLegacy("Failed to load preset!", NOTIFY_ERROR, 3)
                 end
-                presetMenu:Close()
+                FadeOutAndRemove(presetMenu, 0.12)
             end
         end
     end, presetContent)
